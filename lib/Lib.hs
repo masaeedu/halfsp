@@ -8,24 +8,22 @@ import Data.Text (pack, unpack)
 import HieDb
 import Language.LSP.Server
 import Language.LSP.Types
-import OccName
 import Module
+import OccName
 import System.FilePath
+
+symbolKindOfOccName :: OccName -> SymbolKind
+symbolKindOfOccName n
+  | isDataOcc n = SkConstructor
+  | isVarOcc n = SkVariable
+  | isTcOcc n = SkInterface
+  | otherwise = SkUnknown 0
 
 symbolInfo :: FilePath -> Res DefRow -> SymbolInformation
 symbolInfo rootPath (DefRow {..} :. ModuleInfo {..}) =
   SymbolInformation
     { _name = pack $ occNameString defNameOcc,
-      _kind =
-        if isDataOcc defNameOcc
-          then SkConstructor
-          else
-            if isVarOcc defNameOcc
-              then SkVariable
-              else
-                if isTcOcc defNameOcc
-                  then SkInterface
-                  else SkUnknown 0,
+      _kind = symbolKindOfOccName defNameOcc,
       _deprecated = Nothing,
       _location =
         Location
@@ -39,22 +37,21 @@ symbolInfo rootPath (DefRow {..} :. ModuleInfo {..}) =
       _containerName = Just $ pack $ moduleNameString modInfoName
     }
 
+handleWorkspaceSymbolRequest :: Handlers (LspT c IO)
+handleWorkspaceSymbolRequest = requestHandler SWorkspaceSymbol $ \RequestMessage {_params = WorkspaceSymbolParams {_query = query}} cb -> do
+  mRootPath <- getRootPath
+  case mRootPath of
+    Nothing -> cb $ Left $ ResponseError InvalidRequest "No root workspace was found" Nothing
+    Just rootPath -> do
+      results <- liftIO $ withHieDb (rootPath </> ".hiedb") $ flip searchDef $ unpack query
+      cb $ Right $ List $ fmap (symbolInfo rootPath) results
+
 serverDef :: ServerDefinition ()
 serverDef =
   ServerDefinition
     { onConfigurationChange = const $ pure $ Left "Changing configuration is not supported",
       doInitialize = pure . pure . pure,
-      staticHandlers =
-        mconcat
-          [ requestHandler SWorkspaceSymbol $
-              \RequestMessage {_params = WorkspaceSymbolParams {_query = query}} cb -> do
-                mRootPath <- getRootPath
-                case mRootPath of
-                  Nothing -> cb $ Left $ ResponseError InvalidRequest "No root workspace was found" Nothing
-                  Just rootPath -> do
-                    results <- liftIO $ withHieDb (rootPath </> ".hiedb") $ flip searchDef $ unpack query
-                    cb $ Right $ List $ fmap (symbolInfo rootPath) results
-          ],
+      staticHandlers = handleWorkspaceSymbolRequest,
       interpretHandler = \env -> Iso (runLspT env) liftIO,
       options = defaultOptions
     }
