@@ -1,0 +1,38 @@
+{
+  "iohk-hnix": {
+    "branch": "master",
+    "description": "Alternative Haskell Infrastructure for Nixpkgs",
+    "homepage": "https://input-output-hk.github.io/haskell.nix",
+    "owner": "masaeedu",
+    "repo": "haskell.nix",
+    "rev": "6f5f47da6c7cbda428a76eb9c78bbfd9a8879934",
+    "sha256": "04l7idcskvkqwm5lwd7368fapgi0wpb529f90lgw797dwzzf31f2",
+    "type": "tarball",
+    "url": "https://github.com/masaeedu/haskell.nix/archive/6f5f47da6c7cbda428a76eb9c78bbfd9a8879934.tar.gz",
+    "url_template": "https://github.com/<owner>/<repo>/archive/<rev>.tar.gz"
+  },
+  "niv": {
+    "branch": "master",
+    "description": "Easy dependency management for Nix projects",
+    "homepage": "https://github.com/nmattia/niv",
+    "owner": "nmattia",
+    "repo": "niv",
+    "rev": "af958e8057f345ee1aca714c1247ef3ba1c15f5e",
+    "sha256": "1qjavxabbrsh73yck5dcq8jggvh3r2jkbr6b5nlz5d9yrqm9255n",
+    "type": "tarball",
+    "url": "https://github.com/nmattia/niv/archive/af958e8057f345ee1aca714c1247ef3ba1c15f5e.tar.gz",
+    "url_template": "https://github.com/<owner>/<repo>/archive/<rev>.tar.gz"
+  },
+  "nix-haskell-hls": {
+    "branch": "master",
+    "description": "Nix builds of Haskell Language Server",
+    "homepage": null,
+    "owner": "shajra",
+    "repo": "nix-haskell-hls",
+    "rev": "7f5dad7d3569467cd7f41429566e59f0cbf1dc40",
+    "sha256": "02fb8x5g7kc8rklb6d937xglrhkj5y6f0vlvpzalqhhfcyxp1l3q",
+    "type": "tarball",
+    "url": "https://github.com/shajra/nix-haskell-hls/archive/7f5dad7d3569467cd7f41429566e59f0cbf1dc40.tar.gz",
+    "url_template": "https://github.com/<owner>/<repo>/archive/<rev>.tar.gz"
+  }
+}
