@@ -17,6 +17,8 @@ dependencies:
 - text
 - string-conversions
 - ghc
+- microlens
+- hie-bios
 
 ghc-options: -Wall
 default-extensions:
