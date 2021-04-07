@@ -29,3 +29,5 @@ halfsp will never support any other LSP messages.
 ## goals
 
 As the name suggests, this project is a temporary hack. Specifically, it is intended to work around limitations in GHC recompilation-avoidance in the presence of Template Haskell, which can cause severe performance issues on large codebases with heavy use of TH.
+
+For any project where you don't have this problem, use [Haskell Language Server](https://github.com/haskell/haskell-language-server/).
