@@ -1,8 +1,19 @@
 module Utils where
 
 -- 🙈
+import Control.Monad.IO.Class
 fromJust :: Maybe a -> a
 fromJust (Just a) = a
+
+-- Either
+etpure :: Applicative m => a -> m (Either e a)
+etpure = pure . pure
+
+etbind :: Monad m => m (Either e a) -> (a -> m (Either e b)) -> m (Either e b)
+etbind ma amb = ma >>= either (pure . Left) amb
+
+etlift :: Functor m => m a -> m (Either e a)
+etlift = fmap pure
 
 -- Continuations
 type K i o a = (a -> i) -> o
@@ -37,4 +48,8 @@ kcodensity :: Monad m => m a -> (forall r. K (m r) (m r) a)
 kcodensity = (>>=)
 
 kuncodensity :: Monad m => (forall r. K (m r) (m r) a) -> m a
-kuncodensity k = k pure
+kuncodensity = ($ pure)
+
+kliftIO :: MonadIO m => (forall r. K (IO r) (IO r) a) -> K (m r) (m r) a
+kliftIO k = kcodensity $ liftIO $ kuncodensity k
+

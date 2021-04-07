@@ -19,6 +19,8 @@ dependencies:
 - ghc
 - microlens
 - hie-bios
+- array
+- containers
 
 ghc-options: -Wall
 default-extensions:
