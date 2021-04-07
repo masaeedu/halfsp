@@ -6,26 +6,22 @@
 
 module Lib (serverMain) where
 
+import Control.Arrow ((&&&))
 import Control.Monad.IO.Class (MonadIO (liftIO))
+import Control.Monad.Trans.Maybe (runMaybeT)
 import Data.Bifunctor (Bifunctor (first, second))
+import Data.Map (Map)
+import qualified Data.Map as M
 import Data.Maybe (listToMaybe)
 import Data.Text (Text, intercalate, pack, replace, unpack)
 import DynFlags (DynFlags)
-import GhcideSteal (hoverInfo, symbolKindOfOccName)
+import GhcideSteal (gotoDefinition, hoverInfo, symbolKindOfOccName)
 import HIE.Bios
   ( CradleLoadResult (CradleFail, CradleNone, CradleSuccess),
     loadCradle,
   )
 import HIE.Bios.Environment (getRuntimeGhcLibDir)
-import HieDb
-  ( ModuleInfo (modInfoName),
-    dynFlagsForPrinting,
-    pointCommand,
-    searchDef,
-    withHieDb,
-    withTarget,
-    type (:.) ((:.)),
-  )
+import HieDb (ModuleInfo (modInfoName), dynFlagsForPrinting, getAllIndexedMods, hieModInfo, pointCommand, searchDef, withHieDb, withTarget, type (:.) ((:.)))
 import HieDb.Types
   ( DefRow (..),
     HieDb,
@@ -34,7 +30,7 @@ import HieDb.Types
     LibDir (LibDir),
     Res,
   )
-import HieTypes (HieAST, HieFile (hie_types), TypeIndex)
+import HieTypes (HieAST, HieFile (hie_asts, hie_types), TypeIndex)
 import Language.LSP.Server
   ( Handlers,
     LspT,
@@ -48,7 +44,8 @@ import Language.LSP.Server
     type (<~>) (Iso),
   )
 import Language.LSP.Types
-  ( ErrorCode (InternalError, InvalidRequest),
+  ( DefinitionParams (..),
+    ErrorCode (InternalError, InvalidRequest),
     Hover (..),
     HoverContents (..),
     HoverParams (..),
@@ -62,17 +59,18 @@ import Language.LSP.Types
     Range (Range, _end, _start),
     RequestMessage (RequestMessage, _params),
     ResponseError (ResponseError),
-    SMethod (STextDocumentHover, SWorkspaceSymbol),
+    SMethod (STextDocumentDefinition, STextDocumentHover, SWorkspaceSymbol),
     SymbolInformation (..),
     TextDocumentIdentifier (..),
     WorkspaceSymbolParams (WorkspaceSymbolParams, _query),
     filePathToUri,
     sectionSeparator,
     uriToFilePath,
+    type (|?) (InL, InR), Uri
   )
 import Language.LSP.Types.Lens (uri)
 import Lens.Micro ((^.))
-import Module (moduleNameSlashes, moduleNameString)
+import Module (ModuleName, moduleNameSlashes, moduleNameString)
 import OccName
   ( occNameString,
   )
@@ -120,13 +118,14 @@ moduleToTextDocumentIdentifier wsroot = TextDocumentIdentifier . filePathToUri .
 astsAtPoint :: HieFile -> (Int, Int) -> Maybe (Int, Int) -> [HieAST TypeIndex]
 astsAtPoint hiefile start end = pointCommand hiefile start end id
 
-astsForRequest :: HieDb -> TextDocumentIdentifier -> Position -> IO (Either HieDbErr (HieFile, [HieAST TypeIndex]))
-astsForRequest hiedb tdocId position =
-  withTarget hiedb (textDocumentIdentifierToHieFilePath tdocId) $ \hiefile ->
-    (hiefile, astsAtPoint hiefile (coordsLSPToHieDb position) Nothing)
+hieFileFromTextDocumentIdentifier :: HieDb -> TextDocumentIdentifier -> IO (Either ResponseError HieFile)
+hieFileFromTextDocumentIdentifier hiedb tdocId = first hiedbErrorToResponseError <$> withTarget hiedb (textDocumentIdentifierToHieFilePath tdocId) id
 
-hieFileAndAstFromPointRequest :: HieDb -> TextDocumentIdentifier -> Position -> IO (Either HieDbErr (HieFile, Maybe (HieAST TypeIndex)))
-hieFileAndAstFromPointRequest hiedb tdocId position = fmap (second listToMaybe) <$> astsForRequest hiedb tdocId position
+hieFileAndAstsFromPointRequest :: HieDb -> TextDocumentIdentifier -> Position -> IO (Either ResponseError (HieFile, [HieAST TypeIndex]))
+hieFileAndAstsFromPointRequest hiedb tdocId position = hieFileFromTextDocumentIdentifier hiedb tdocId `etbind` \hiefile -> etpure (hiefile, astsAtPoint hiefile (coordsLSPToHieDb position) Nothing)
+
+hieFileAndAstFromPointRequest :: HieDb -> TextDocumentIdentifier -> Position -> IO (Either ResponseError (HieFile, Maybe (HieAST TypeIndex)))
+hieFileAndAstFromPointRequest hiedb tdocId position = fmap (second listToMaybe) <$> hieFileAndAstsFromPointRequest hiedb tdocId position
 
 -- TODO: Render these properly
 renderHieDbError :: HieDbErr -> Text
@@ -140,6 +139,11 @@ renderHieDbError =
 
 hiedbErrorToResponseError :: HieDbErr -> ResponseError
 hiedbErrorToResponseError = flip (ResponseError InternalError) Nothing . renderHieDbError
+
+moduleSourcePathMap :: HieDb -> FilePath -> IO (Map ModuleName Uri)
+moduleSourcePathMap hiedb wsroot = do
+  rows <- getAllIndexedMods hiedb
+  pure $ fmap (^. uri) $ M.fromList $ fmap ((modInfoName &&& moduleToTextDocumentIdentifier wsroot) . hieModInfo) rows
 
 -- The actual code
 
@@ -173,7 +177,7 @@ handleWorkspaceSymbolRequest = requestHandler SWorkspaceSymbol $ \req ->
     requestQuery :: Message 'WorkspaceSymbol -> Text
     requestQuery RequestMessage {_params = WorkspaceSymbolParams {_query = q}} = q
 
-retrieveHoverData :: HieDb -> DynFlags -> Message 'TextDocumentHover -> IO (Either HieDbErr (Maybe Hover))
+retrieveHoverData :: HieDb -> DynFlags -> Message 'TextDocumentHover -> IO (Either ResponseError (Maybe Hover))
 retrieveHoverData hiedb dflags RequestMessage {_params = HoverParams {..}} =
   hieFileAndAstFromPointRequest hiedb _textDocument _position `etbind` \(hiefile, mast) -> case mast of
     Nothing -> etpure Nothing
@@ -191,16 +195,32 @@ handleTextDocumentHoverRequest = requestHandler STextDocumentHover $ \req ->
     kliftIO $
       withHieDb (wsroot </> ".hiedb") `kbind` \hiedb ->
         kcodensity $
-          getDynFlags wsroot `etbind` \dflags -> do
-            hdata <- retrieveHoverData hiedb dflags req
-            pure $ first hiedbErrorToResponseError hdata
+          getDynFlags wsroot `etbind` \dflags -> retrieveHoverData hiedb dflags req
+
+handleDefinitionRequest :: Handlers (LspT c IO)
+handleDefinitionRequest = requestHandler STextDocumentDefinition $ \RequestMessage {_params = DefinitionParams {..}} ->
+  getWsRoot `ekbind` \wsroot ->
+    kliftIO $
+      withHieDb (wsroot </> ".hiedb") `kbind` \hiedb ->
+        kcodensity $
+          hieFileFromTextDocumentIdentifier hiedb _textDocument `etbind` \hiefile -> do
+            modmap <- moduleSourcePathMap hiedb wsroot
+            result <- runMaybeT $ gotoDefinition hiedb wsroot modmap (hie_asts hiefile) _position
+            pure $ case result of
+              Nothing -> Left $ ResponseError InternalError "Unable to go to definition" Nothing
+              Just l -> Right $ InR $ InL $ List l
 
 serverDef :: ServerDefinition ()
 serverDef =
   ServerDefinition
     { onConfigurationChange = const $ pure $ Left "Changing configuration is not supported",
       doInitialize = pure . pure . pure,
-      staticHandlers = mconcat [handleWorkspaceSymbolRequest, handleTextDocumentHoverRequest],
+      staticHandlers =
+        mconcat
+          [ handleWorkspaceSymbolRequest,
+            handleTextDocumentHoverRequest,
+            handleDefinitionRequest
+          ],
       interpretHandler = \env -> Iso (runLspT env) liftIO,
       options = defaultOptions
     }

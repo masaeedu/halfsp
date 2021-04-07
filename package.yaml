@@ -21,6 +21,8 @@ dependencies:
 - hie-bios
 - array
 - containers
+- transformers
+- hashable
 
 ghc-options: -Wall
 default-extensions:
