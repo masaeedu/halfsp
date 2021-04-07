@@ -15,13 +15,14 @@ If you do all that, it'll provide the following incredible list of...
 At the moment, halfsp responds to the following LSP messages:
 
 - `workspace/symbol`
+- `textDocument/hover`
+- `textDocument/definition`
 
 halfsp will soon support the following...
 
 ## todo features
 
-- `textDocument/{definition, declaration, implementation, references}`
-- `textDocument/hover`
+- `textDocument/{declaration, implementation, references}`
 
 halfsp will never support any other LSP messages.
 
