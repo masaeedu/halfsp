@@ -8,21 +8,6 @@ build-type: Simple
 
 dependencies:
 - { name: "base", version: '>=4.13 && <4.15' }
-- lsp
-- lsp-types
-- hiedb
-- aeson
-- sqlite-simple
-- filepath
-- text
-- string-conversions
-- ghc
-- microlens
-- hie-bios
-- array
-- containers
-- transformers
-- hashable
 
 ghc-options: -Wall
 default-extensions:
@@ -53,9 +38,38 @@ default-extensions:
 
 library:
   source-dirs: lib
+  dependencies:
+  - lsp
+  - lsp-types
+  - hiedb
+  - aeson
+  - sqlite-simple
+  - filepath
+  - text
+  - string-conversions
+  - ghc
+  - microlens
+  - hie-bios
+  - array
+  - containers
+  - transformers
+  - hashable
 
 executable:
   source-dirs: app
   main: Main.hs
   dependencies:
   - halfsp
+
+tests:
+  halfsp-test:
+    main: Main.hs
+    source-dirs: test
+    dependencies:
+    - halfsp
+    - tasty
+    - tasty-discover
+    - tasty-hunit
+    - lsp-test
+    build-tools:
+    - tasty-discover

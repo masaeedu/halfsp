@@ -6,5 +6,8 @@ cradle:
   - path: "./app"
     component: "halfsp:exe:halfsp"
 
+  - path: "./test"
+    component: "halfsp:test:halfsp-test"
+
   - path: "./app/Paths_halfsp.hs"
     component: "halfsp:exe:halfsp"
