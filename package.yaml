@@ -8,6 +8,7 @@ build-type: Simple
 
 dependencies:
 - { name: "base", version: '>=4.13 && <4.15' }
+- directory
 
 ghc-options: -Wall
 default-extensions:
