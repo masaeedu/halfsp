@@ -124,7 +124,7 @@ hardcodedSourceDirs :: [Text]
 hardcodedSourceDirs = ["src", "test"]
 
 replaceMany :: [Text] -> Text -> Text -> Text
-replaceMany patterns substitution = appEndo . foldMap (Endo . replace substitution) $ patterns
+replaceMany patterns substitution = appEndo . foldMap (Endo . flip replace substitution) $ patterns
 
 -- Less dumb alternative compose
 type LDAC :: (Type -> Type) -> (Type -> Type) -> Type -> Type
@@ -136,17 +136,29 @@ instance (Applicative f, Alternative g) => Alternative (LDAC f g) where
   empty = LDAC $ pure empty
   LDAC x <|> LDAC y = LDAC $ liftA2 (<|>) x y
 
-whicheverOfManyThingsWorks :: [a -> IO (Maybe b)] -> a -> IO (Maybe b)
+whicheverOfManyThingsWorks
+  :: (Applicative f, Applicative g, Alternative h)
+  => [f (g (h b))]
+  -> f (g (h b))
 whicheverOfManyThingsWorks = coerce . asum . fmap (LDAC . LDAC)
 
 -- TODO: Make this less hacky, involves fixing up the NULL entries in the modules table in hiedb
 textDocumentIdentifierToHieFilePath :: TextDocumentIdentifier -> HieTarget
 textDocumentIdentifierToHieFilePath (TextDocumentIdentifier u) =
-  Left $ unpack $ replace ".hs" ".hie" $ replace "test" ".hiefiles" $ replaceMany hardcodedSourceDirs ".hiefiles" $ pack $ fromJust $ uriToFilePath u
+  Left
+  $ unpack
+  $ replace ".hs" ".hie"
+  $ replaceMany hardcodedSourceDirs ".hiefiles"
+  $ pack
+  $ fromJust
+  $ uriToFilePath u
+
+fmap2 :: (Functor f, Functor g) => (a -> b) -> f (g a) -> f (g b)
+fmap2 = fmap . fmap
 
 -- TODO: Get rid of this hack, defer to populated modules table
 moduleToTextDocumentIdentifier :: FilePath -> ModuleInfo -> IO (Maybe TextDocumentIdentifier)
-moduleToTextDocumentIdentifier wsroot = (fmap . fmap) (TextDocumentIdentifier . filePathToUri) . whicheverOfManyThingsWorks (fmap (moduleFileInSourceDirIfExists . cs) hardcodedSourceDirs)
+moduleToTextDocumentIdentifier wsroot = fmap2 (TextDocumentIdentifier . filePathToUri) . whicheverOfManyThingsWorks (fmap (moduleFileInSourceDirIfExists . cs) hardcodedSourceDirs)
   where
     moduleFileInSourceDirIfExists :: FilePath -> ModuleInfo -> IO (Maybe FilePath)
     moduleFileInSourceDirIfExists sourceDir = ensureFilePathExists . (wsroot </>) . (sourceDir </>) . (<.> "hs") . moduleNameSlashes . modInfoName
@@ -160,13 +172,17 @@ astsAtPoint :: HieFile -> (Int, Int) -> Maybe (Int, Int) -> [HieAST TypeIndex]
 astsAtPoint hiefile start end = pointCommand hiefile start end id
 
 hieFileFromTextDocumentIdentifier :: HieDb -> TextDocumentIdentifier -> IO (Either ResponseError HieFile)
-hieFileFromTextDocumentIdentifier hiedb tdocId = first hiedbErrorToResponseError <$> withTarget hiedb (textDocumentIdentifierToHieFilePath tdocId) id
+hieFileFromTextDocumentIdentifier hiedb tdocId =
+  first hiedbErrorToResponseError <$> withTarget hiedb (textDocumentIdentifierToHieFilePath tdocId) id
 
 hieFileAndAstsFromPointRequest :: HieDb -> TextDocumentIdentifier -> Position -> IO (Either ResponseError (HieFile, [HieAST TypeIndex]))
-hieFileAndAstsFromPointRequest hiedb tdocId position = hieFileFromTextDocumentIdentifier hiedb tdocId `etbind` \hiefile -> etpure (hiefile, astsAtPoint hiefile (coordsLSPToHieDb position) Nothing)
+hieFileAndAstsFromPointRequest hiedb tdocId position =
+  hieFileFromTextDocumentIdentifier hiedb tdocId `etbind` \hiefile ->
+    etpure (hiefile, astsAtPoint hiefile (coordsLSPToHieDb position) Nothing)
 
 hieFileAndAstFromPointRequest :: HieDb -> TextDocumentIdentifier -> Position -> IO (Either ResponseError (HieFile, Maybe (HieAST TypeIndex)))
-hieFileAndAstFromPointRequest hiedb tdocId position = fmap (second listToMaybe) <$> hieFileAndAstsFromPointRequest hiedb tdocId position
+hieFileAndAstFromPointRequest hiedb tdocId position =
+  fmap (second listToMaybe) <$> hieFileAndAstsFromPointRequest hiedb tdocId position
 
 -- TODO: Render these properly
 renderHieDbError :: HieDbErr -> Text
