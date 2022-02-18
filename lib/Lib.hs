@@ -1,5 +1,6 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
@@ -11,7 +12,9 @@ module Lib (serverMain) where
 import Control.Applicative
 import Control.Arrow ((&&&))
 import Control.Monad.IO.Class (MonadIO (liftIO))
+import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Maybe (runMaybeT)
+import Control.Monad.Trans.Except (runExceptT, throwE)
 import Data.Bifunctor (Bifunctor (first, second))
 import Data.Coerce
 import Data.Foldable (asum)
@@ -31,7 +34,23 @@ import HIE.Bios
     loadCradle,
   )
 import HIE.Bios.Environment (getRuntimeGhcLibDir)
-import HieDb (ModuleInfo (modInfoName), dynFlagsForPrinting, getAllIndexedMods, hieModInfo, pointCommand, searchDef, withHieDb, withTarget, type (:.) ((:.)))
+import HieDb
+  ( ModuleInfo (modInfoName),
+    dynFlagsForPrinting,
+    getAllIndexedMods,
+    getHieFilesIn,
+    hieModInfo,
+    initConn,
+    pointCommand,
+    searchDef,
+    withHieDb,
+    withTarget,
+    type (:.) ((:.))
+  )
+import HieDb.Run
+  ( Options (..),
+    doIndex,
+  )
 import HieDb.Types
   ( DefRow (..),
     HieDb,
@@ -43,6 +62,7 @@ import HieDb.Types
 import HieTypes (HieAST, HieFile (hie_asts, hie_types), TypeIndex)
 import Language.LSP.Server
   ( Handlers,
+    LanguageContextEnv (..),
     LspT,
     MonadLsp,
     ServerDefinition (..),
@@ -64,7 +84,7 @@ import Language.LSP.Types
     MarkupContent (..),
     MarkupKind (MkMarkdown),
     Message,
-    Method (TextDocumentHover, WorkspaceSymbol),
+    Method (Initialize, TextDocumentHover, WorkspaceSymbol),
     Position (Position, _character, _line),
     Range (Range, _end, _start),
     RequestMessage (RequestMessage, _params),
@@ -87,6 +107,7 @@ import OccName
   )
 import System.Directory (doesFileExist)
 import System.FilePath ((<.>), (</>))
+import System.IO (stderr)
 import Utils (EK, ekbind, eklift, etbind, etpure, fromJust, kbind, kcodensity, kliftIO)
 
 -- LSP utils
@@ -273,11 +294,36 @@ handleDefinitionRequest = requestHandler STextDocumentDefinition $ \RequestMessa
               Nothing -> Left $ ResponseError InternalError "Unable to go to definition" Nothing
               Just l -> Right $ InR $ InL $ List l
 
+doInitialize :: LanguageContextEnv a -> Message 'Initialize -> IO (Either ResponseError (LanguageContextEnv a))
+doInitialize env _ = runExceptT $ do
+  wsroot <- getWsRootInit
+  let database = wsroot </> ".hiedb"
+  lift . withHieDb database $ \hiedb -> do
+    initConn hiedb
+    hieFiles <- getHieFilesIn (wsroot </> ".hiefiles")
+    let options =
+          Options
+            { trace = False
+            , quiet = True
+            , colour = True
+            , context = Nothing
+            , reindex = False
+            , keepMissing = False
+            , database
+            }
+    doIndex hiedb options stderr hieFiles
+    pure env
+  where
+    getWsRootInit =
+      case resRootPath env of
+        Nothing -> throwE $ ResponseError InvalidRequest "No root workspace was found" Nothing
+        Just wsroot -> pure wsroot
+
 serverDef :: ServerDefinition ()
 serverDef =
   ServerDefinition
     { onConfigurationChange = const $ pure $ Left "Changing configuration is not supported",
-      doInitialize = pure . pure . pure,
+      doInitialize = Lib.doInitialize,
       staticHandlers =
         mconcat
           [ handleWorkspaceSymbolRequest,
