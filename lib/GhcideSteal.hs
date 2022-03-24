@@ -88,7 +88,6 @@ showNameWithoutUniques dflags = T.pack . prettyprint
     style = mkUserStyle neverQualify AllTheWay
 
 hoverInfo :: DynFlags -> Array TypeIndex HieTypeFlat -> HieAST TypeIndex -> (Maybe Range, [T.Text])
-hoverInfo = undefined {-
 hoverInfo dflags typeLookup ast = (Just range, prettyNames ++ pTypes)
   where
     pTypes
@@ -97,11 +96,10 @@ hoverInfo dflags typeLookup ast = (Just range, prettyNames ++ pTypes)
 
     range = realSrcSpanToRange $ nodeSpan ast
 
-    ast' = fmap (\t -> recoverFullType t typeLookup) ast
     wrapHaskell x = "\n```haskell\n" <> x <> "\n```\n"
-    info = nodeInfo ast'
+    info = nodeInfo' ast
     names = M.assocs $ nodeIdentifiers info
-    types :: 
+    types :: [TypeIndex]
     types = nodeType info
 
     prettyNames :: [T.Text]
@@ -112,8 +110,10 @@ hoverInfo dflags typeLookup ast = (Just range, prettyNames ++ pTypes)
         definedAt n
     prettyName (Left m, _) = showGhc dflags m
 
+    prettyTypes :: [T.Text]
     prettyTypes = map (("_ :: " <>) . prettyType) types
-    prettyType t = showGhc dflags $ hieTypeToIface t -- $ recoverFullType t typeLookup
+    prettyType :: TypeIndex -> T.Text
+    prettyType t = showGhc dflags $ hieTypeToIface $ recoverFullType t typeLookup
 
     definedAt name =
       -- do not show "at <no location info>" and similar messages
@@ -121,7 +121,6 @@ hoverInfo dflags typeLookup ast = (Just range, prettyNames ++ pTypes)
       case nameSrcLoc name of
         UnhelpfulLoc {} | isInternalName name || isSystemName name -> []
         _ -> ["*Defined " <> showSD dflags (pprNameDefnLoc name) <> "*"]
--}
 
 symbolKindOfOccName :: OccName -> SymbolKind
 symbolKindOfOccName ocn
