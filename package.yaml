@@ -7,7 +7,7 @@ license: MIT
 build-type: Simple
 
 dependencies:
-- { name: "base", version: '>=4.13 && <4.15' }
+- { name: "base", version: '>=4.16 && <4.17' }
 - directory
 
 ghc-options: -Wall

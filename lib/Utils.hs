@@ -44,11 +44,11 @@ ekbind k f cb = k $ either (cb . Left) (($ cb) . f)
 eklift :: K i o a -> EK i o e a
 eklift = kmap Right
 
-kcodensity :: Monad m => m a -> (forall r. K (m r) (m r) a)
+kcodensity :: Monad m => m a -> K (m r) (m r) a
 kcodensity = (>>=)
 
 kuncodensity :: Monad m => (forall r. K (m r) (m r) a) -> m a
-kuncodensity = ($ pure)
+kuncodensity k = k pure
 
 kliftIO :: MonadIO m => (forall r. K (IO r) (IO r) a) -> K (m r) (m r) a
 kliftIO k = kcodensity $ liftIO $ kuncodensity k

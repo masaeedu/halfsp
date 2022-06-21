@@ -27,7 +27,7 @@ import Data.Maybe (listToMaybe)
 import Data.Monoid (Endo (..))
 import Data.String.Conversions
 import Data.Text (Text, intercalate, pack, replace, unpack)
-import DynFlags (DynFlags)
+import GHC (DynFlags)
 import GhcideSteal (gotoDefinition, hoverInfo, symbolKindOfOccName)
 import HIE.Bios
   ( CradleLoadResult (CradleFail, CradleNone, CradleSuccess),
@@ -59,7 +59,7 @@ import HieDb.Types
     LibDir (LibDir),
     Res,
   )
-import HieTypes (HieAST, HieFile (hie_asts, hie_types), TypeIndex)
+import GHC.Iface.Ext.Types (HieAST, HieFile (hie_asts, hie_types), TypeIndex)
 import Language.LSP.Server
   ( Handlers,
     LanguageContextEnv (..),
@@ -101,8 +101,8 @@ import Language.LSP.Types
   )
 import Language.LSP.Types.Lens (uri)
 import Lens.Micro ((^.))
-import Module (ModuleName, moduleNameSlashes, moduleNameString)
-import OccName
+import GHC.Unit.Module.Name (ModuleName, moduleNameSlashes, moduleNameString)
+import GHC.Plugins
   ( occNameString,
   )
 import System.Directory (doesFileExist)
@@ -134,10 +134,10 @@ getDynFlags wsroot = liftIO $ do
 
 -- HieDb utils
 coordsHieDbToLSP :: (Int, Int) -> Position
-coordsHieDbToLSP (l, c) = Position {_line = l - 1, _character = c - 1}
+coordsHieDbToLSP (l, c) = Position {_line = fromIntegral l - 1, _character = fromIntegral c - 1}
 
 coordsLSPToHieDb :: Position -> (Int, Int)
-coordsLSPToHieDb Position {..} = (_line + 1, _character + 1)
+coordsLSPToHieDb Position {..} = (fromIntegral _line + 1, fromIntegral _character + 1)
 
 -- {{{ hacky garbage that needs to be replaced
 
@@ -246,7 +246,9 @@ symbolInfo wsroot (DefRow {..} :. m) = do
                         _end = coordsHieDbToLSP (defELine, defECol)
                       }
                 },
-            _containerName = Just $ pack $ moduleNameString $ modInfoName m
+            _containerName = Just $ pack $ moduleNameString $ modInfoName m,
+            -- FIXME can we fill this in properly?
+            _tags = Nothing
           }
 
 handleWorkspaceSymbolRequest :: Handlers (LspT c IO)
@@ -331,7 +333,8 @@ serverDef =
             handleDefinitionRequest
           ],
       interpretHandler = \env -> Iso (runLspT env) liftIO,
-      options = defaultOptions
+      options = defaultOptions,
+      defaultConfig = ()
     }
 
 serverMain :: IO Int
