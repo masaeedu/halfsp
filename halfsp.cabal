@@ -1,0 +1,135 @@
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.34.7.
+--
+-- see: https://github.com/sol/hpack
+
+name:           halfsp
+version:        0.0.0
+author:         Asad Saeeduddin
+maintainer:     masaeedu@gmail.com
+license:        MIT
+build-type:     Simple
+
+library
+  exposed-modules:
+      GhcideSteal
+      Lib
+      Utils
+  other-modules:
+      Paths_halfsp
+  hs-source-dirs:
+      lib
+  default-extensions:
+      GADTs
+      StandaloneDeriving
+      DeriveFunctor
+      DerivingVia
+      GeneralizedNewtypeDeriving
+      ScopedTypeVariables
+      RankNTypes
+      QuantifiedConstraints
+      TypeApplications
+      TypeOperators
+      MultiParamTypeClasses
+      ConstraintKinds
+      DataKinds
+      PolyKinds
+      KindSignatures
+      UndecidableInstances
+      FlexibleInstances
+      FlexibleContexts
+      DefaultSignatures
+  ghc-options: -Wall
+  build-depends:
+      aeson
+    , array
+    , base ==4.16.*
+    , containers
+    , directory
+    , filepath
+    , ghc
+    , hashable
+    , hie-bios
+    , hiedb
+    , lsp
+    , lsp-types
+    , microlens
+    , sqlite-simple
+    , string-conversions
+    , text
+    , transformers
+  default-language: Haskell2010
+
+executable halfsp
+  main-is: Main.hs
+  other-modules:
+      Paths_halfsp
+  hs-source-dirs:
+      app
+  default-extensions:
+      GADTs
+      StandaloneDeriving
+      DeriveFunctor
+      DerivingVia
+      GeneralizedNewtypeDeriving
+      ScopedTypeVariables
+      RankNTypes
+      QuantifiedConstraints
+      TypeApplications
+      TypeOperators
+      MultiParamTypeClasses
+      ConstraintKinds
+      DataKinds
+      PolyKinds
+      KindSignatures
+      UndecidableInstances
+      FlexibleInstances
+      FlexibleContexts
+      DefaultSignatures
+  ghc-options: -Wall
+  build-depends:
+      base ==4.16.*
+    , directory
+    , halfsp
+  default-language: Haskell2010
+
+test-suite halfsp-test
+  type: exitcode-stdio-1.0
+  main-is: Main.hs
+  other-modules:
+      Paths_halfsp
+  hs-source-dirs:
+      test
+  default-extensions:
+      GADTs
+      StandaloneDeriving
+      DeriveFunctor
+      DerivingVia
+      GeneralizedNewtypeDeriving
+      ScopedTypeVariables
+      RankNTypes
+      QuantifiedConstraints
+      TypeApplications
+      TypeOperators
+      MultiParamTypeClasses
+      ConstraintKinds
+      DataKinds
+      PolyKinds
+      KindSignatures
+      UndecidableInstances
+      FlexibleInstances
+      FlexibleContexts
+      DefaultSignatures
+  ghc-options: -Wall
+  build-tool-depends:
+      tasty-discover:tasty-discover
+  build-depends:
+      base ==4.16.*
+    , directory
+    , halfsp
+    , lsp-test
+    , tasty
+    , tasty-discover
+    , tasty-hunit
+  default-language: Haskell2010
