@@ -156,7 +156,7 @@ locationsAtPoint hiedb wsroot imports pos ast =
       zeroPos = Position 0 0
       zeroRange = Range zeroPos zeroPos
       modToLocation m = (\fs -> pure $ Location fs zeroRange) <$> M.lookup m imports
-   in nubOrd . concat <$> mapMaybeM (either (pure . modToLocation) (nameToLocation hiedb wsroot)) ns
+   in nubOrd . concat <$> mapMaybeM (either (pure . modToLocation) (nameToLocation hiedb wsroot imports)) ns
 
 -- Copied from nodeInfo, which is specialized to Type, because it uses
 -- nonDetCmpType for the ordering... but TypeIndex is an Int. FIXME does the
@@ -198,8 +198,8 @@ pointCommand hf pos k =
     cha = _character pos
 
 -- | Given a 'Name' attempt to find the location where it is defined.
-nameToLocation :: MonadIO m => HieDb -> FilePath -> Name -> m (Maybe [Location])
-nameToLocation hiedb wsroot name = runMaybeT $
+nameToLocation :: MonadIO m => HieDb -> FilePath ->  M.Map ModuleName Uri -> Name -> m (Maybe [Location])
+nameToLocation hiedb wsroot imports name = runMaybeT $
   case nameSrcSpan name of
     sp@(RealSrcSpan rsp _)
       -- Lookup in the db if we got a location in a boot file
@@ -220,17 +220,17 @@ nameToLocation hiedb wsroot name = runMaybeT $
           erow <- liftIO $ findDef hiedb (nameOccName name) (Just $ moduleName mod) Nothing
           case erow of
             [] -> MaybeT $ pure Nothing
-            xs -> lift $ mapMaybeM (runMaybeT . defRowToLocation wsroot) xs
-        xs -> lift $ mapMaybeM (runMaybeT . defRowToLocation wsroot) xs
+            xs -> lift $ mapMaybeM (runMaybeT . (defRowToLocation wsroot imports)) xs
+        xs -> lift $ mapMaybeM (runMaybeT . (defRowToLocation wsroot imports)) xs
 
-defRowToLocation :: Monad m => FilePath -> Res DefRow -> MaybeT m Location
-defRowToLocation wsroot (row :. info) = do
+defRowToLocation :: Monad m => FilePath ->  M.Map ModuleName Uri -> Res DefRow -> MaybeT m Location
+defRowToLocation wsroot imports (row :. info) = do
   let start = Position (intToUInt (defSLine row) - 1) (intToUInt (defSCol row) - 1)
       end = Position (intToUInt (defELine row) - 1) (intToUInt (defECol row) - 1)
       range = Range start end
   file <- case modInfoSrcFile info of
     Just src -> pure $ filePathToUri $ wsroot </> src
-    Nothing -> MaybeT $ pure Nothing
+    Nothing -> MaybeT $ pure $ M.lookup (modInfoName info) imports
   pure $ Location file range
 
 dropEnd1 :: [a] -> [a]
