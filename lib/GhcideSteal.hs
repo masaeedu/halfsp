@@ -10,23 +10,31 @@ import Control.Monad.Trans.Class
 import Control.Monad.Trans.Maybe
 import Data.Array
 import Data.Containers.ListUtils (nubOrd)
+import Data.Foldable (foldl')
 import Data.List (isSuffixOf)
 import qualified Data.Map as M
 import Data.Maybe (catMaybes)
+import qualified Data.Set as S
 import qualified Data.Text as T
-import DynFlags
-import FastString (unpackFS)
-import qualified FastString as FS
 import GHC
+import GHC.Data.FastString (unpackFS)
+import qualified GHC.Data.FastString as FS
+import GHC.Iface.Ext.Types
+import GHC.Iface.Ext.Utils
+import GHC.Plugins hiding ((<>))
+import GHC.Types.Error
+import GHC.Utils.Outputable hiding ((<>))
 import HieDb hiding (pointCommand)
-import HieTypes
-import HieUtils
+--import HieTypes
+--import HieUtils
 import Language.LSP.Types
-import MonadUtils (mapMaybeM)
-import Name
-import Outputable hiding ((<>))
-import SrcLoc
 import System.FilePath ((</>))
+
+mapMaybeM :: Monad m => (a -> m (Maybe b)) -> ([a] -> m [b])
+mapMaybeM _ [] = pure []
+mapMaybeM m (x:xs) = m x >>= \it -> case it of
+  Nothing -> mapMaybeM m xs
+  Just y  -> fmap ((:) y) (mapMaybeM m xs)
 
 -- {{{ Development.IDE.Types.Location
 --
@@ -42,13 +50,13 @@ realSrcSpanToRange real =
 
 realSrcLocToPosition :: RealSrcLoc -> Position
 realSrcLocToPosition real =
-  Position (srcLocLine real - 1) (srcLocCol real - 1)
+  Position (intToUInt (srcLocLine real) - 1) (intToUInt (srcLocCol real) - 1)
 
 -- | Extract a file name from a GHC SrcSpan (use message for unhelpful ones)
 -- FIXME This may not be an _absolute_ file name, needs fixing.
 srcSpanToFilename :: SrcSpan -> Maybe FilePath
 srcSpanToFilename (UnhelpfulSpan _) = Nothing
-srcSpanToFilename (RealSrcSpan real) = Just $ FS.unpackFS $ srcSpanFile real
+srcSpanToFilename (RealSrcSpan real _) = Just $ FS.unpackFS $ srcSpanFile real
 
 srcSpanToLocation :: FilePath -> SrcSpan -> Maybe Location
 srcSpanToLocation wsroot src = do
@@ -59,7 +67,7 @@ srcSpanToLocation wsroot src = do
 -- | Convert a GHC SrcSpan to a DAML compiler Range
 srcSpanToRange :: SrcSpan -> Maybe Range
 srcSpanToRange (UnhelpfulSpan _) = Nothing
-srcSpanToRange (RealSrcSpan real) = Just $ realSrcSpanToRange real
+srcSpanToRange (RealSrcSpan real _) = Just $ realSrcSpanToRange real
 
 -- }}}
 
@@ -70,27 +78,28 @@ showSD :: DynFlags -> SDoc -> T.Text
 showSD dflags = T.pack . unsafePrintSDoc dflags
 
 unsafePrintSDoc :: DynFlags -> SDoc -> String
-unsafePrintSDoc dflags sdoc = renderWithStyle dflags sdoc (mkUserStyle dflags neverQualify AllTheWay)
+unsafePrintSDoc dflags sdoc = showSDoc dflags (withPprStyle (mkUserStyle neverQualify AllTheWay) sdoc)
 
 showNameWithoutUniques :: Outputable a => DynFlags -> a -> T.Text
 showNameWithoutUniques dflags = T.pack . prettyprint
   where
     dyn = dflags `gopt_set` Opt_SuppressUniques
-    prettyprint x = renderWithStyle dyn (ppr x) style
-    style = mkUserStyle dyn neverQualify AllTheWay
+    prettyprint x = showSDoc dyn (withPprStyle style (ppr x))
+    style = mkUserStyle neverQualify AllTheWay
 
 hoverInfo :: DynFlags -> Array TypeIndex HieTypeFlat -> HieAST TypeIndex -> (Maybe Range, [T.Text])
 hoverInfo dflags typeLookup ast = (Just range, prettyNames ++ pTypes)
   where
     pTypes
-      | length names == 1 = dropEnd1 $ map wrapHaskell prettyTypes
+      | Prelude.length names == 1 = dropEnd1 $ map wrapHaskell prettyTypes
       | otherwise = map wrapHaskell prettyTypes
 
     range = realSrcSpanToRange $ nodeSpan ast
 
     wrapHaskell x = "\n```haskell\n" <> x <> "\n```\n"
-    info = nodeInfo ast
+    info = nodeInfo' ast
     names = M.assocs $ nodeIdentifiers info
+    types :: [TypeIndex]
     types = nodeType info
 
     prettyNames :: [T.Text]
@@ -101,7 +110,9 @@ hoverInfo dflags typeLookup ast = (Just range, prettyNames ++ pTypes)
         definedAt n
     prettyName (Left m, _) = showGhc dflags m
 
+    prettyTypes :: [T.Text]
     prettyTypes = map (("_ :: " <>) . prettyType) types
+    prettyType :: TypeIndex -> T.Text
     prettyType t = showGhc dflags $ hieTypeToIface $ recoverFullType t typeLookup
 
     definedAt name =
@@ -118,12 +129,14 @@ symbolKindOfOccName ocn
   | isTcOcc ocn = SkStruct
   | otherwise = SkUnknown 1
 
+-- TODO we'll use TypeIndex, but we'll not use nodeInfo
+-- we'll want sourced node info or something?
 gotoDefinition ::
   MonadIO m =>
   HieDb ->
   FilePath ->
   M.Map ModuleName Uri ->
-  HieASTs a ->
+  HieASTs TypeIndex ->
   Position ->
   MaybeT m [Location]
 gotoDefinition hiedb wsroot imports srcSpans pos =
@@ -136,34 +149,59 @@ locationsAtPoint ::
   FilePath ->
   M.Map ModuleName Uri ->
   Position ->
-  HieASTs a ->
+  HieASTs TypeIndex ->
   m [Location]
 locationsAtPoint hiedb wsroot imports pos ast =
-  let ns = concat $ pointCommand ast pos (M.keys . nodeIdentifiers . nodeInfo)
+  let ns = concat $ pointCommand ast pos (M.keys . nodeIdentifiers . nodeInfo')
       zeroPos = Position 0 0
       zeroRange = Range zeroPos zeroPos
       modToLocation m = (\fs -> pure $ Location fs zeroRange) <$> M.lookup m imports
-   in nubOrd . concat <$> mapMaybeM (either (pure . modToLocation) $ nameToLocation hiedb wsroot) ns
+   in nubOrd . concat <$> mapMaybeM (either (pure . modToLocation) (nameToLocation hiedb wsroot imports)) ns
+
+-- Copied from nodeInfo, which is specialized to Type, because it uses
+-- nonDetCmpType for the ordering... but TypeIndex is an Int. FIXME does the
+-- ordering here actually make sense? Is this definition complete trash? Could
+-- be.
+nodeInfo' :: HieAST TypeIndex -> NodeInfo TypeIndex
+nodeInfo' = foldl' combineNodeInfo emptyNodeInfo . getSourcedNodeInfo . sourcedNodeInfo
+  where
+    combineNodeInfo :: NodeInfo TypeIndex -> NodeInfo TypeIndex -> NodeInfo TypeIndex
+    (NodeInfo as ai ad) `combineNodeInfo` (NodeInfo bs bi bd) =
+      NodeInfo (S.union as bs) (mergeSorted ai bi) (M.unionWith (<>) ad bd)
+      where
+        mergeSorted :: [TypeIndex] -> [TypeIndex] -> [TypeIndex]
+        mergeSorted la@(a:as) lb@(b:bs) = case compare a b of
+                                            LT -> a : mergeSorted as lb
+                                            EQ -> a : mergeSorted as bs
+                                            GT -> b : mergeSorted la bs
+        mergeSorted as [] = as
+        mergeSorted [] bs = bs
+
+uintToInt :: UInt -> Int
+uintToInt = fromIntegral
+
+intToUInt :: Int -> UInt
+intToUInt = fromIntegral
 
 pointCommand :: HieASTs t -> Position -> (HieAST t -> a) -> [a]
 pointCommand hf pos k =
   catMaybes $
     M.elems $
-      flip M.mapWithKey (getAsts hf) $ \fs ast ->
+      flip M.mapWithKey (getAsts hf) $ \(LexicalFastString fs) ast ->
         case selectSmallestContaining (sp fs) ast of
           Nothing -> Nothing
           Just ast' -> Just $ k ast'
   where
-    sloc fs = mkRealSrcLoc fs (line + 1) (cha + 1)
+    sloc fs = mkRealSrcLoc fs (uintToInt line + 1) (uintToInt cha + 1)
     sp fs = mkRealSrcSpan (sloc fs) (sloc fs)
     line = _line pos
     cha = _character pos
 
 -- | Given a 'Name' attempt to find the location where it is defined.
-nameToLocation :: MonadIO m => HieDb -> FilePath -> Name -> m (Maybe [Location])
-nameToLocation hiedb wsroot name = runMaybeT $
+nameToLocation :: MonadIO m => HieDb -> FilePath ->  M.Map ModuleName Uri -> Name -> m (Maybe [Location])
+nameToLocation hiedb wsroot imports name = runMaybeT $
   case nameSrcSpan name of
-    sp@(RealSrcSpan rsp)
+    sp@(RealSrcSpan rsp _)
       -- Lookup in the db if we got a location in a boot file
       | not $ "boot" `isSuffixOf` unpackFS (srcSpanFile rsp) -> MaybeT $ pure $ pure <$> srcSpanToLocation wsroot sp
     sp -> do
@@ -172,7 +210,7 @@ nameToLocation hiedb wsroot name = runMaybeT $
       -- In this case the interface files contain garbage source spans
       -- so we instead read the .hie files to get useful source spans.
       mod <- MaybeT $ return $ nameModule_maybe name
-      erow <- liftIO $ findDef hiedb (nameOccName name) (Just $ moduleName mod) (Just $ moduleUnitId mod)
+      erow <- liftIO $ findDef hiedb (nameOccName name) (Just $ moduleName mod) (Just $ moduleUnit mod)
       case erow of
         [] -> do
           -- If the lookup failed, try again without specifying a unit-id.
@@ -182,17 +220,17 @@ nameToLocation hiedb wsroot name = runMaybeT $
           erow <- liftIO $ findDef hiedb (nameOccName name) (Just $ moduleName mod) Nothing
           case erow of
             [] -> MaybeT $ pure Nothing
-            xs -> lift $ mapMaybeM (runMaybeT . defRowToLocation wsroot) xs
-        xs -> lift $ mapMaybeM (runMaybeT . defRowToLocation wsroot) xs
+            xs -> lift $ mapMaybeM (runMaybeT . (defRowToLocation wsroot imports)) xs
+        xs -> lift $ mapMaybeM (runMaybeT . (defRowToLocation wsroot imports)) xs
 
-defRowToLocation :: Monad m => FilePath -> Res DefRow -> MaybeT m Location
-defRowToLocation wsroot (row :. info) = do
-  let start = Position (defSLine row - 1) (defSCol row - 1)
-      end = Position (defELine row - 1) (defECol row - 1)
+defRowToLocation :: Monad m => FilePath ->  M.Map ModuleName Uri -> Res DefRow -> MaybeT m Location
+defRowToLocation wsroot imports (row :. info) = do
+  let start = Position (intToUInt (defSLine row) - 1) (intToUInt (defSCol row) - 1)
+      end = Position (intToUInt (defELine row) - 1) (intToUInt (defECol row) - 1)
       range = Range start end
   file <- case modInfoSrcFile info of
     Just src -> pure $ filePathToUri $ wsroot </> src
-    Nothing -> MaybeT $ pure Nothing
+    Nothing -> MaybeT $ pure $ M.lookup (modInfoName info) imports
   pure $ Location file range
 
 dropEnd1 :: [a] -> [a]
