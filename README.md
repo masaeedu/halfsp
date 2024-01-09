@@ -1,3 +1,9 @@
+# UNMAINTAINED
+
+Use https://github.com/josephsumabat/static-ls if you're in the market.
+
+Original README follows.
+
 # halfsp
 
 halfsp is a Haskell language server that doesn't do much, and does it faster than HLS.
